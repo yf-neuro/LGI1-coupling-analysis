@@ -1,0 +1,257 @@
+---
+title: "Group Coupling"
+output: html_document
+date: "2024-11-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script preprocesses the spindle and slow oscillation data to feed it into the python scripts.
+Because these data were analyzed by a team, there are different IDs for the same participant. I united these IDs for the further analysis.
+
+```{r SO read data, echo=FALSE}
+base_dir <- "./data/EEG_Events/Events/"
+
+for(i in 1:13){
+  if(i==1){
+    all_data_SO <- read.csv(paste0("./data/EEG_Events/Events/test_lgipat_test_run1_so_events_datanum_", i,".csv"))
+    next
+  }
+  
+  tmp <- read.csv(paste0("./data/EEG_Events/Events/test_lgipat_test_run1_so_events_datanum_", i,".csv"))
+  all_data_SO = rbind(all_data_SO, tmp)
+}
+
+unique(all_data_SO$channel)
+
+library(tidyr)
+library(dplyr)
+all_data = all_data_SO
+# NegPeak in seconds 
+all_data_SO <- all_data_SO %>% select(channel, datasetnum, seconds_begin, seconds_end, seconds_peak_max, seconds_trough_max, duration_seconds, amplitude_peak2trough_max) %>% mutate(NegPeak = seconds_trough_max)
+
+idx_chan <- data.frame(channel = c("F3", "F4", "C3", "C4", "O1", "O2"), idx = c(1:6))
+all_data_SO$Annika_Id <- all_data_SO$datasetnum
+subjects <- data.frame(Subject_ID = c("13", "12", "11", "10", "9", "8", "7","6","5", "4", "3", "2", "1"), Annika_Id = c("13", "12", "11", "10", "9", "8", "7","6","5", "4", "3", "2", "1"))
+
+all_data_SO$Annika_Id <- as.character(all_data_SO$Annika_Id)
+
+all_data_SO <- merge(all_data_SO, subjects, by = "Annika_Id")
+all_data_SO <- merge(all_data_SO, idx_chan, by = "channel")
+
+all_data_SO <- all_data_SO %>% group_by(Subject_ID) %>% arrange(NegPeak,.by_group = T)
+
+
+
+```
+
+```{r exclude all doubles, echo=FALSE}
+tmp_data = all_data_SO
+
+for(j in 1:6){
+for(i in 1:length(tmp_data$NegPeak)){
+  if(i >= length(tmp_data$NegPeak)){
+    next
+  }
+  tmp = tmp_data$NegPeak[i+1]-tmp_data$NegPeak[i]
+  # check if slow oscilations are less than 1.5 seconds apart
+  if (tmp <1.50){ 
+    # check which amplitude is bigger and then delete row with the smaller one
+    if(tmp_data$amplitude_peak2trough_max[i] < tmp_data$amplitude_peak2trough_max[i+1]){
+     tmp_data = tmp_data[-c(i),] 
+    }
+    else{
+      tmp_data = tmp_data[-c(i+1),] 
+    }
+  }
+  
+}
+}
+
+filt_SO = tmp_data
+
+
+```
+
+
+Map the different IDs to each other:
+```{r SP read data, echo=FALSE}
+
+base_dir <- "./data/EEG_Events/Events/"
+
+for(i in 1:13){
+  if(i==1){
+    all_data_SP <- read.csv(paste0("./data/EEG_Events/Events/test_lgipat_test_run1_spindle_events_datanum_", i,".csv"))
+    next
+  }
+  
+  tmp <- read.csv(paste0("./data/EEG_Events/Events/test_lgipat_test_run1_spindle_events_datanum_", i,".csv"))
+  all_data_SP = rbind(all_data_SP, tmp)
+}
+
+unique(all_data_SP$channel)
+
+library(tidyr)
+library(dplyr)
+all_data = all_data_SP
+
+# NegPeak in seconds 
+all_data_SP <- all_data_SP %>% select(channel, datasetnum, seconds_begin, seconds_end, seconds_peak_max, seconds_trough_max, duration_seconds, amplitude_peak2trough_max) %>% mutate(Peak = seconds_peak_max)
+
+idx_chan <- data.frame(channel = c("F3", "F4", "C3", "C4", "O1", "O2"), idx = c(1:6))
+
+all_data_SP$Annika_Id <- all_data_SP$datasetnum
+subjects <- data.frame(Subject_ID = c("13", "12", "11", "10", "9", "8", "7","6","5", "4", "3", "2", "1"), Annika_Id = c("13", "12", "11", "10", "9", "8", "7","6","5", "4", "3", "2", "1"))
+
+all_data_SP$Annika_Id <- as.character(all_data_SP$Annika_Id)
+
+all_data_SP <- merge(all_data_SP, subjects, by = "Annika_Id")
+all_data_SP <- merge(all_data_SP, idx_chan, by = "channel")
+
+all_data_SP <- all_data_SP %>% group_by(Subject_ID) %>% arrange(Peak,.by_group = T)
+```
+
+Exclude all doubling spindles:
+```{r SP exclude all doubles, echo=FALSE}
+tmp_data = all_data_SP
+
+for(j in 1:6){
+for(i in 1:length(tmp_data$Peak)){
+  if(i >= length(tmp_data$Peak)){
+    next
+  }
+  tmp = tmp_data$Peak[i+1]-tmp_data$Peak[i]
+  if (tmp <0.50){
+    # check which amplitude is bigger and then delete row with the smaller one
+    if(tmp_data$amplitude_peak2trough_max[i] < tmp_data$amplitude_peak2trough_max[i+1]){
+     tmp_data = tmp_data[-c(i),] 
+    }
+    else{
+      tmp_data = tmp_data[-c(i+1),] 
+    }
+  }
+}
+}
+filt_SP = tmp_data
+
+
+
+```
+
+Transform the SO & Spindle events for Python analysis.
+
+```{r transform for python, echo=FALSE}
+filt_SO$MidCrossing <- (abs(filt_SO$seconds_trough_max - filt_SO$seconds_peak_max)/2)+filt_SO$seconds_trough_max
+# sanity check
+# test = filt_SO %>% group_by(datasetnum) %>% mutate(check_SO = ifelse(MidCrossing > seconds_peak_max, 1, 0))
+filt_SO$Subject <- filt_SO$Subject_ID
+filt_SO$IdxChannel <- filt_SO$idx - 1
+
+
+write.csv(filt_SO, "./derivatives/Group/slow_waves/SO_events.csv")
+
+filt_SP$IdxChannel <- filt_SP$idx -1
+filt_SP$Subject <-filt_SP$Subject_ID
+test <- filt_SP %>% group_by(Subject) %>% filter(Subject == 9)
+n_occur <- data.frame(table(test$IdxChannel))
+n_occur[n_occur$Freq > 1,]
+test[test$IdxChannel %in% n_occur$Var1[n_occur$Freq > 1],]
+
+write.csv(filt_SP, "./derivatives/Group/spindles/SP_events.csv")
+library(dplyr)
+filt_SP %>% group_by(Subject_ID, Annika_Id) %>% summarize(n())
+
+```
+
+
+## Group coupling analysis
+Detect the overlapping events (of slow oscillations and spindles)
+
+```{r coupling, echo=FALSE}
+
+library(dplyr)
+sp_raw <- filt_SP
+sp_n <- sp_raw %>% group_by(Subject)%>% summarise(count = n())
+N <- length(sp_n$Subject)
+sw_raw <- filt_SO
+sw_n <- sw_raw %>% group_by(Subject)%>% summarise(count = n())
+Sub <- sw_n$Subject
+sp_n <- sp_n$count
+sw_n <- sw_n$count
+
+sp_tmp <- c(sp_raw$Peak)
+sw_tmp <- c(sw_raw$NegPeak)
+
+
+sp <- matrix(, nrow = N, ncol = max(sp_n))
+sw <- matrix(, nrow = N, ncol = max(sw_n))
+
+# start values
+l = 1
+u = sp_n[1]
+for(i in 1:N){ # loop through participants
+  if(i > 1) {
+  u = u+sp_n[i]
+  l = l+sp_n[i-1]
+  }
+  sp[i,1:sp_n[i]] = sp_tmp[l:u]
+}
+
+# start values
+l = 1
+u = sw_n[1]
+for(i in 1:N){ # loop through participants
+  if(i > 1) {
+  u = u+sw_n[i]
+  l = l+sw_n[i-1]
+  }
+  sw[i,1:sw_n[i]] = sw_tmp[l:u]
+}
+
+index_coupl <- matrix(, nrow = 0, ncol = 2)
+coupl_sp <- sp
+# compute coupling
+for(sub in 1:N) { # loop over subjects
+  for(so in 1:sw_n[sub]) { # iterate over SOs
+    curr_so = sw[sub,so]
+    for(spindle in 1:sp_n[sub]){# iterate over Spindles
+      curr_sp = sp[sub,spindle]
+      if ((curr_so+0.75 > curr_sp) & (curr_so-0.75 < curr_sp)){ # check if spindle is within 2 seconds of SO
+
+        index_coupl = rbind(index_coupl, c(Sub[sub], spindle))
+        
+      } #end of if
+    } # end of spindle loop
+  }# end of iterate over SOs
+} # sub loop ends
+
+sp_n_sum <- sp_n
+
+for(i in 1:length(sp_n)){
+  if(i == 1){
+    sp_n_sum[i] <- sp_n_sum[i]
+  }
+  else{
+  sp_n_sum[i] <- sp_n_sum[i] + sp_n_sum[i-1]
+  }
+}
+
+index_coupl <- as.data.frame(index_coupl)
+
+index_coupl$Subject <- index_coupl$V1
+index_coupl$index <- index_coupl$V2
+index_coupl$coupling <- "coupled"
+index_coupl$V2 <- NULL
+index_coupl$V1 <- NULL
+
+sp_raw <- sp_raw %>% group_by(Subject) %>% mutate(index = row_number(Subject))
+
+sp_raw <- merge(sp_raw, index_coupl, by = c("Subject", "index"), all = T)
+
+sp_raw$coupling[is.na(sp_raw$coupling)]<- "uncoupled"
+
+write.csv(sp_raw, "./derivatives/Group/spindles/SP_coupling.csv")
+```
+

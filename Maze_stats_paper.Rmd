@@ -1,0 +1,293 @@
+---
+title: "Maze_Statistics"
+output: html_document
+date: "2025-01-23"
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(ggpubr)
+library(rstatix)
+```
+
+
+```{r}
+library(emmeans)
+data_maze_raw <- read.csv2("./data/Maze/ANOVA_LGI1.csv")
+
+data_maze <- data_maze_raw %>% pivot_longer(cols = B1_distance_learn:R4_latency_revlearn, names_to = c("Timepoint", "Variable", "Test"), names_sep = "_")
+
+```
+
+
+```{r}
+library(afex)
+library(emmeans)
+library(dplyr)
+
+
+calc_anova <- function(dat_aov, test, param){
+  # Fit the repeated measures ANOVA using afex
+aov1 <- aov_ez(
+  id = "ID",                # Subject identifier
+  dv = "value",             # Dependent variable
+  within = "Timepoint",     # Within-subject factor
+  between = "Group",        # Between-subject factor
+  data = dat_aov,           # Data frame
+  type = 2                  # Type II sum of squares
+)
+
+# Extract the ANOVA table from the aov_ez model object
+anova_table <- as.data.frame(aov1$anova_table) %>%
+  mutate(
+    p.adj = p.adjust(`Pr(>F)`, method = "BH"),  # Adjust p-values using BH method
+  )
+  anova_table$Test <- test
+  anova_table$Parameter <- param
+
+# Pairwise comparisons using emmeans
+pwc_emmeans <- emmeans(aov1, pairwise ~ Group * Timepoint) %>% summary(infer = TRUE, adjust = "BH")
+
+# Extract pairwise comparisons table
+pwc_table <- as.data.frame(pwc_emmeans$contrasts) 
+  pwc_table$Test <- test
+  pwc_table$Parameter <- param
+
+ return(list(anova_table, pwc_table))
+}
+
+```
+
+
+Calculate ANOVAs:
+
+```{r}
+dat_aov <- data_maze %>% filter(Test == "learn" & Variable == "distance")
+aov <- calc_anova(dat_aov, test = "learning", param = "distance")
+aov1 <- aov[[1]]
+pwc1 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "learn" & Variable == "latency")
+aov <- calc_anova(dat_aov,test = "learning", param = "latency")
+aov2 <- aov[[1]]
+pwc2 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "revlearn" & Variable == "latency")
+aov <- calc_anova(dat_aov, test = "revlearn", param = "latency")
+aov3 <- aov[[1]]
+pwc3 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "revlearn" & Variable == "distance")
+aov <- calc_anova(dat_aov, test = "revlearn", param = "distance")
+aov4 <- aov[[1]]
+pwc4 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "revlearn" & Variable == "reldwtimenew")
+aov <- calc_anova(dat_aov, test = "revlearn", param = "reldwtimenew")
+aov5 <- aov[[1]]
+pwc5 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "revlearn" & Variable == "reldwtimeold")
+aov <- calc_anova(dat_aov, test = "revlearn", param = "reldwtimeold")
+aov6 <- aov[[1]]
+pwc6 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "disc" & Variable == "reldwtime")
+aov <- calc_anova(dat_aov, test = "disc", param = "reldwtime")
+aov7 <- aov[[1]]
+pwc7 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "cons" & Variable == "reldwtime")
+aov <- calc_anova(dat_aov, test = "cons", param = "reldwtime")
+aov8 <- aov[[1]]
+pwc8 <- aov[[2]]
+
+
+pwc <- rbind(pwc1,pwc2,pwc3, pwc4, pwc5, pwc6, pwc7, pwc8)
+aovs <- rbind(aov1,aov2,aov3,aov4,aov5,aov6,aov7,aov8)
+
+library(xlsx)
+write.xlsx(aovs, "./data/Maze/ANOVA_Result.xlsx")
+write.xlsx(pwc, "./data/Maze/PWC_Result.xlsx")
+
+
+```
+
+
+```{r}
+calc_anova_nonparametric <- function(dat_aov, test, param){
+  library(rstatix)
+  library(dplyr)
+
+  # Perform Friedman test for within-subject comparisons (if more than 2 timepoints)
+  friedman_res <- dat_aov %>%
+    group_by(Group) %>%
+    friedman_test(value ~ Timepoint | ID) %>%
+    ungroup()
+
+  # Perform Kruskal-Wallis test for between-group comparisons at each timepoint
+  kruskal_res <- dat_aov %>%
+    group_by(Timepoint) %>%
+    kruskal_test(value ~ Group) %>%
+    ungroup()
+
+  # Merge the results into a single ANOVA table
+  anova_table <- bind_rows(
+    mutate(friedman_res, Test = "Friedman Test"),
+    mutate(kruskal_res, Test = "Kruskal-Wallis Test")
+  ) %>%
+    mutate(
+      p.adj = p.adjust(p, method = "BH"),  # Adjust p-values using BH method
+      Parameter = param
+    )
+
+  # Post hoc pairwise comparisons using Dunn’s test with BH correction
+  pwc_table <- dat_aov %>%
+    dunn_test(value ~ Group, p.adjust.method = "BH") %>%
+    mutate(
+      Test = "Dunn’s Test",
+      Parameter = param
+    )
+
+  return(list(anova_table, pwc_table))
+}
+
+```
+
+
+```{r}
+calc_anova_nonparametric <- function(dat_aov, test, param){
+  library(ARTool)
+  library(rstatix)
+  library(dplyr)
+
+  # Perform ART ANOVA to test main effects and interaction
+  dat_aov$Group <- as.factor(dat_aov$Group)
+  dat_aov$Timepoint <- as.factor(dat_aov$Timepoint)
+
+  art_model <- art(value ~ Group * Timepoint + (1 | ID), data = dat_aov)
+
+  # ANOVA table
+  anova_res <- anova(art_model) %>%
+    mutate(Test = "ART Contrasts", Parameter = param, Phase = test)
+
+  # Post hoc pairwise comparisons using ART-adjusted ranks
+  posthoc_res <- summary(art.con(art_model, "Group:Timepoint")) %>%
+    mutate(Test = "ART Contrasts", Parameter = param, Phase = test)
+
+  return(list(anova_table = anova_res, posthoc_table = posthoc_res))
+}
+
+```
+
+
+```{r}
+
+dat_aov <- data_maze %>% filter(Test == "learn" & Variable == "distance")
+aov <- calc_anova_nonparametric(dat_aov, test = "learning", param = "distance")
+aov1 <- aov[[1]]
+pwc1 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "learn" & Variable == "latency")
+aov <- calc_anova_nonparametric(dat_aov,test = "learning", param = "latency")
+aov2 <- aov[[1]]
+pwc2 <- aov[[2]]
+
+dat_aov <- data_maze %>% filter(Test == "revlearn" & Variable == "latency" & ID != "30")
+aov <- calc_anova_nonparametric(dat_aov, test = "revlearn", param = "latency")
+aov3 <- aov[[1]]
+pwc3 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "revlearn" & Variable == "distance")
+aov <- calc_anova_nonparametric(dat_aov, test = "revlearn", param = "distance")
+aov4 <- aov[[1]]
+pwc4 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "revlearn" & Variable == "reldwtimenew")
+aov <- calc_anova_nonparametric(dat_aov, test = "revlearn", param = "reldwtimenew")
+aov5 <- aov[[1]]
+pwc5 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "revlearn" & Variable == "reldwtimeold")
+aov <- calc_anova_nonparametric(dat_aov, test = "revlearn", param = "reldwtimeold")
+aov6 <- aov[[1]]
+pwc6 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "disc" & Variable == "reldwtime")
+aov <- calc_anova_nonparametric(dat_aov, test = "disc", param = "reldwtime")
+aov7 <- aov[[1]]
+pwc7 <- aov[[2]]
+
+
+dat_aov <- data_maze %>% filter(Test == "cons" & Variable == "reldwtime")
+aov <- calc_anova_nonparametric(dat_aov, test = "cons", param = "reldwtime")
+aov8 <- aov[[1]]
+pwc8 <- aov[[2]]
+
+
+pwc <- rbind(pwc1,pwc2,pwc3, pwc4, pwc5, pwc6, pwc7, pwc8)
+aovs <- rbind(aov1,aov2,aov3,aov4,aov5,aov6,aov7,aov8)
+
+library(xlsx)
+write.xlsx(aovs, "./data/Maze/ART_Result.xlsx")
+write.xlsx(pwc, "./data/Maze/ART_PostHoc_Result.xlsx")
+
+```
+
+
+
+```{r}
+bxp <- ggboxplot(
+  selfesteem2, x = "Timepoint", y = "score",
+  color = "treatment", palette = "jco"
+  )
+bxp
+
+plt <- dat_aov %>% group_by(Timepoint, Group) %>% summarise(value = mean(value)) %>% 
+  mutate(Timepoint= as.factor(Timepoint), Group = as.factor(Group)) %>% 
+  ggplot(aes(x = Timepoint, y = value, group = Group)) +
+  geom_point() +
+  geom_line(aes(linetype = Group)) +
+  labs(
+    linetype = "Group", # Change legend title for linetype
+    x = "Phase",          # Optional: Change x-axis label
+    y = "Value"               # Optional: Change y-axis label
+  ) +
+  scale_linetype_manual(
+    values = c(1, 2),          # Customize line types
+    labels = c("Controls", "Patients") # Change legend labels
+  )+
+  theme_minimal()
+plt
+
+# Visualization: box plots with p-values
+plt+geom_signif(
+  comparisons = list(c("B2", "R1")), # Groups to compare (if across timepoints)
+  annotations = aov8$p.adj.signif[2], # Add significance level
+  y_position = c(8), # Adjust height of annotation
+  tip_length = 0.01
+) +
+  stat_pvalue_manual(
+    data = pwc8, 
+    label = "p.adj.signif", 
+    y.position = c(6, 7), # Adjust y-positions for pairwise annotations
+    tip.length = 0.01
+  )
+```
+

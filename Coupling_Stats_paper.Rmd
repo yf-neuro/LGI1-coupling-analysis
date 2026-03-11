@@ -1,0 +1,58 @@
+---
+title: "Stats_coupling"
+output: html_document
+date: "2024-12-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+coupl_contr = read.csv("./derivatives/Group/spindles/SP_coupling_contr.csv")
+coupl_pat = read.csv("./derivatives/Group/spindles/SP_coupling.csv")
+```
+
+```{r}
+
+coupl_contr$Group <- "Control"
+coupl_pat$Group <- "LGI1"
+coupl_contr$Subject_ID <- coupl_contr$Subject_ID+13
+
+coupl <- rbind(coupl_contr,coupl_pat)
+
+coupl %>% group_by(Group) 
+
+coupling <- coupl %>% 
+  group_by(Group, coupling, Subject_ID) %>% 
+  summarize(n = n()) %>% 
+  group_by(Subject_ID) %>%
+  mutate(total = sum(n),
+         prop = n / sum(n)) %>% 
+  ungroup()
+
+library(BayesFactor)
+coupling$Group <- as.factor(coupling$Group)
+coupling$coupling <- as.factor(coupling$coupling)
+
+coupl <- coupling %>%pivot_wider(names_from = c(coupling), values_from = c(prop, n, total))
+
+write.csv(coupl,"./derivatives/Group/spindles/SP_coupling_JASP.csv")
+X <- coupl %>% filter(Group == "Control")
+Y <- coupl %>% filter(Group == "LGI1" & Subject_ID != "13")
+
+coupl %>% group_by(Group)%>%summarise(mean_g = mean(prop_coupled),
+                                      n = n(),
+                                      sem = sd(prop_coupled) / sqrt(n))
+
+
+library(ggplot2)
+library(DFBA)
+ggplot(coupl, aes(x = prop_coupled, group = Group))+ geom_histogram()
+
+shapiro.test(coupl$prop_coupled)
+
+wilcox.test(x = X$prop_coupled, y = Y$prop_coupled)
+```
+
